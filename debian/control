@@ -1,0 +1,13 @@
+Source: dh-vci
+Section: devel
+Priority: optional
+Maintainer: Vyatta Package Maintainers <DL-vyatta-help@att.com>
+Build-Depends: debhelper (>= 9)
+Standards-Version: 3.9.6
+
+Package: dh-vci
+Architecture: all
+Depends: ${perl:Depends}, ${misc:Depends}
+Description: Vyatta Component Infra Debian Build Helper
+ A Debian Helper program to automate integration of Vyatta Component packages
+ with the Vyatta Component Infrastructure.

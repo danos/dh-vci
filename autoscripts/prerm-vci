@@ -1,0 +1,1 @@
+deb-vci-helper remove #COMPONENTS# >/dev/null

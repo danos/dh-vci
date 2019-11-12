@@ -1,0 +1,181 @@
+#!/usr/bin/perl -w
+
+=head1 NAME
+
+dh_vci_enable - enable/disable vci component files
+
+=cut
+
+use strict;
+use Debian::Debhelper::Dh_Lib;
+use File::Find;
+use File::Basename;
+use Text::ParseWords qw(shellwords); # in core since Perl 5
+
+=head1 SYNOPSIS
+
+B<dh_vci_enable> [S<I<debhelper options>>] [B<--no-enable>] [B<--name=>I<name>] [S<I<component file> ...>]
+
+=head1 DESCRIPTION
+
+B<dh_vci_enable> is a debhelper program that is responsible for enabling
+and disabling vci component files.
+
+In the simple case, it finds all component files installed by a package (e.g.
+bacula-fd.component) and enables them.
+
+For only generating blocks for specific service files, you need to pass them as
+arguments, e.g. B<dh_vci_enable quota.component> and B<dh_vci_enable
+--name=quotarpc quotarpc.component>.
+
+=head1 FILES
+
+=over 4
+
+=item debian/I<package>.component
+
+If this exists, it is installed into lib/vci/components/I<package>.component in
+the package build directory.
+
+=item debian/I<package>.tmpfile
+
+If this exists, it is installed into usr/lib/tmpfiles.d/I<package>.conf in the
+package build directory. (The tmpfiles.d mechanism is currently only used
+by vci.)
+
+=back
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--no-enable>
+
+Just disable the component(s) on purge, but do not enable them by default.
+
+=item B<--name=>I<name>
+
+Install the component file as I<name.component> instead of the default filename,
+which is the I<package.component>. When this parameter is used,
+B<dh_vci_enable> looks for and installs files named
+F<debian/package.name.component> instead of the usual F<debian/package.component>.
+
+=back
+
+=head1 NOTES
+
+Note that this command is not idempotent. L<dh_prep(1)> should be called
+between invocations of this command (with the same arguments). Otherwise, it
+may cause multiple instances of the same text to be added to maintainer
+scripts.
+
+Note that B<dh_vci_enable> should be run before B<dh_installinit>.
+The default sequence in B<dh> does the right thing, this note is only relevant
+when you are calling B<dh_vci_enable> manually.
+
+=cut
+
+init(options => {
+	"no-enable" => \$dh{NO_ENABLE},
+});
+
+foreach my $package (@{$dh{DOPACKAGES}}) {
+	my $tmpdir = tmpdir($package);
+	my @installed_components;
+	my @components;
+
+	# XXX: This is duplicated in dh_installinit, which is unfortunate.
+	# We do need the component files before running dh_installinit though,
+	# every other solution makes things much worse for all the maintainers.
+
+	# Figure out what filename to install it as.
+	my $script;
+	my $jobfile=$package;
+	if (defined $dh{NAME}) {
+		$jobfile=$script=$dh{NAME};
+	}
+	elsif ($dh{D_FLAG}) {
+		# -d on the command line sets D_FLAG. We will
+		# remove a trailing 'd' from the package name and
+		# use that as the name.
+		$script=$package;
+		if ($script=~m/(.*)d$/) {
+			$jobfile=$script=$1;
+		}
+		else {
+			warning("\"$package\" has no final d' in its name, but -d was specified.");
+		}
+	}
+	elsif ($dh{INIT_SCRIPT}) {
+		$script=$dh{INIT_SCRIPT};
+	}
+	else {
+		$script=$package;
+	}
+
+	my $component=pkgfile($package,"component");
+	if ($component ne '') {
+		my $path="$tmpdir/lib/vci/components";
+		if (! -d "$path") {
+			doit("install","-d","$path");
+		}
+
+		doit("install","-p","-m644",$component,"$path/$script.component");
+	}
+
+	find({
+		wanted => sub {
+			my $name = $File::Find::name;
+			return unless -f $name;
+			# Skip symbolic links, their only legitimate use is for
+			# adding an alias, e.g. linking smartmontools.component
+			# -> smartd.component.
+			return if -l $name;
+			return unless $name =~ m,^$tmpdir/lib/vci/components/([^/]+).component$,;
+			push @installed_components, $1;
+		},
+		no_chdir => 1,
+	}, $tmpdir);
+
+	# Handle either only the component files which were passed as arguments or
+	# all component files that are installed in this package.
+	my @args = @ARGV > 0 ? @ARGV : @installed_components;
+
+	for my $name (@args) {
+		my $base = basename($name);
+
+		# Try to make the path absolute, so that the user can call
+		# dh_installdeb bacula-fd.component
+		if ($base eq $name) {
+			# NB: This works because @installed_components contains
+			# files from precisely one directory.
+			my ($full) = grep { basename($_) eq $base } @installed_components;
+			if (defined($full)) {
+				$name = $full;
+			} else {
+				warning(qq|Could not find "$name" in the /lib/vci/components directory of $package. |);
+			}
+		}
+		push @components, $name;
+	}
+
+	next if @components == 0;
+
+	my $componentargs = join(" ", map { basename($_) } @components);
+	autoscript($package, "postinst", "postinst-vci", "s/#COMPONENTS#/$componentargs/");
+	autoscript($package, "prerm", "prerm-vci", "s/#COMPONENTS#/$componentargs/");
+
+	# vci-system-helpers ships deb-vci-helper which we use in our
+	# autoscripts
+	addsubstvar($package, "misc:Depends", "deb-vci-helper");
+}
+
+=head1 SEE ALSO
+
+L<dh_vci_start(1)>, L<debhelper(7)>
+
+=head1 AUTHORS
+
+ajohnso@brocade.com
+
+=cut
